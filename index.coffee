@@ -1,41 +1,33 @@
 LineAdapter = require './src/line'
-{LineRawMessage, LineImageMessage, LineVideoMessage, LineAudioMessage, LineLocationMessage, LineStickerMessage, LineContactMessage, LineRawOperation, LineFriendOperation, LineBlockOperation} = require './src/message'
-{LineRawMessageListener, LineImageListener, LineVideoListener, LineAudioListener, LineLocationListener, LineStickerListener, LineContactListener, LineRawOperationListener, LineFriendListener, LineBlockListener} = require './src/listener'
-{LineTextAction, LineImageAction, LineVideoAction, LineAudioAction, LineLocationAction, LineStickerAction} = require './src/action'
+{LineImageMessage, LineVideoMessage, LineAudioMessage, LineLocationMessage, LineStickerMessage, LineFollow, LineUnfollow, LineJoin, LineLeave, LinePostback, LineBeacon} = require './src/message'
+{LineImageListener, LineVideoListener, LineAudioListener, LineLocationListener, LineStickerListener, LineFollowListener, LineUnfollowListener, LineJoinListener, LineLeaveListener, LinePostbackListener, LineBeaconListener} = require './src/listener'
 
 module.exports = exports = {
   LineAdapter
 
-  LineRawMessage
   LineImageMessage
   LineVideoMessage
   LineAudioMessage
   LineLocationMessage
   LineStickerMessage
-  LineContactMessage
+  LineFollow
+  LineUnfollow
+  LineJoin
+  LineLeave
+  LinePostback
+  LineBeacon
 
-  LineRawOperation
-  LineFriendOperation
-  LineBlockOperation
-
-  LineRawMessageListener
   LineImageListener
   LineVideoListener
   LineAudioListener
   LineLocationListener
   LineStickerListener
-  LineContactListener
-
-  LineRawOperationListener
-  LineFriendListener
-  LineBlockListener
-
-  LineTextAction
-  LineImageAction
-  LineVideoAction
-  LineAudioAction
-  LineLocationAction
-  LineStickerAction
+  LineFollowListener
+  LineUnfollowListener
+  LineJoinListener
+  LineLeaveListener
+  LinePostbackListener
+  LineBeaconListener
 }
 
 exports.use = (robot) ->

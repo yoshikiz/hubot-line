@@ -1,161 +1,234 @@
 {Robot, Adapter, TextMessage} = require 'hubot'
-HttpsProxyAgent = require 'https-proxy-agent'
 {EventEmitter} = require 'events'
-{LineRawMessage, LineImageMessage, LineVideoMessage, LineAudioMessage, LineLocationMessage, LineStickerMessage, LineContactMessage, LineRawOperation, LineFriendOperation, LineBlockOperation} = require './message'
-{LineAction, LineTextAction, LineImageAction, LineVideoAction, LineAudioAction, LineLocationAction, LineStickerAction} = require './action'
-
+{LineImageMessage, LineVideoMessage, LineAudioMessage, LineLocationMessage, LineStickerMessage, LineFollow, LineUnfollow, LineJoin, LineLeave, LinePostback, LineBeacon} = require './message'
+crypto = require 'crypto'
 
 
 class LineAdapter extends Adapter
-
+    
   send: (envelope, strings...) ->
-    @robot.logger.debug 'LINE send'
-    to = envelope.user.name
-    @bot.send to, str for str in strings
-
+    @robot.logger.debug "LINE send <#{JSON.stringify(strings)}> to <#{envelope.user.id}>"
+    messages = []
+    for string, i in strings when i < 5
+      if typeof(string) is "string"
+        message =
+          type: "text"
+          text: "#{string}"
+        messages.push message
+      else
+        messages.push string
+    @pushMessage envelope.user.id, messages
 
   reply: (envelope, strings...) ->
-    @robot.logger.debug 'LINE reply'
-    to = envelope.user.name
-    @bot.send to, str for str in strings
+    @robot.logger.debug "LINE reply <#{JSON.stringify(strings)}> to <#{envelope.user.token}>"
+    messages = []
+    for string, i in strings when i < 5
+      if typeof(string) is "string"
+        message =
+          type: "text"
+          text: "#{string}"
+        messages.push message
+      else
+        messages.push string
+    @replyMessage envelope.user.token, messages
 
+  pushMessage: (to, messages) ->
+    url = "https://api.line.me/v2/bot/message/push"
+    data =
+      to: to
+      messages: messages
+    @postRequest url, @headers1, data
 
-  emote: (envelope, actions...) ->
-    @robot.logger.debug 'LINE emote'
-    to = envelope.user.name
-    @bot.emote to, act for act in actions
+  replyMessage: (to, messages) ->
+    url = "https://api.line.me/v2/bot/message/reply"
+    data =
+      replyToken: to
+      messages: messages
+    @postRequest url, @headers1, data
+
+  getContent: (id, callback) ->
+    url = "https://api.line.me/v2/bot/message/#{id}/content"
+    @robot.http(url).headers(@headers2).encoding('binary')
+      .get() (err, res, body) ->
+        callback body, err, res
+
+  getProfile: (id, callback) ->
+    url = "https://api.line.me/v2/bot/profile/#{id}"
+    query = ""
+    @getRequest url, @headers2, query, (res) ->
+      callback(res)
+
+  leaveGroup: (id) ->
+    url = "https://api.line.me/v2/bot/group/#{id}/leave"
+    data = ""
+    @postRequest url, @headers2, data
+
+  leaveRoom: (id) ->
+    url = "https://api.line.me/v2/bot/room/#{id}/leave"
+    data = ""
+    @postRequest url, @headers2, data
+
+  postRequest: (url, headers, data) ->
+    logger = @robot.logger
+    @robot.http(url).headers(headers)
+      .post(JSON.stringify(data)) (err, res, body) ->
+        if err or res.statusCode isnt 200
+          logger.error "LINE request [#{res.statusCode}] #{err} - #{body}"
+        logger.debug "LINE request [#{res.statusCode}] - #{body}"
+
+  getRequest: (url, headers, query, callback) ->
+    logger = @robot.logger
+    @robot.http(url).headers(headers).query(query)
+      .get() (err, res, body) ->
+        if err or res.statusCode isnt 200
+          logger.error "LINE request [#{res.statusCode}] #{err} - #{body}"
+        logger.debug "LINE request [#{res.statusCode}] - #{body}"
+        callback(JSON.parse(body))
 
 
   run: ->
     self = @
     @robot.logger.debug 'LINE run'
 
-    options =
-      channelId:     process.env.HUBOT_LINE_CHANNEL_ID
-      channelSecret: process.env.HUBOT_LINE_CHANNEL_SECRET
-      channelMid:    process.env.HUBOT_LINE_CHANNEL_MID
-      callbackPath:  process.env.HUBOT_LINE_CALLBACK_PATH or '/hubot/line/callback'
-      proxy:         process.env.HUBOT_LINE_PROXY_URL or process.env.FIXIE_URL
+    @channelId = process.env.HUBOT_LINE_CHANNEL_ID
+    @channelSecret = process.env.HUBOT_LINE_CHANNEL_SECRET
+    @channelToken = process.env.HUBOT_LINE_CHANNEL_TOKEN
+    @webhookPath = process.env.HUBOT_LINE_WEBHOOK_PATH
 
-    @lineHttpOptions =
-      protocol: 'https:'
-      hostname: 'trialbot-api.line.me'
-      port:     443
-      headers:
-        'X-Line-ChannelID':             options.channelId
-        'X-Line-ChannelSecret':         options.channelSecret
-        'X-Line-Trusted-User-With-ACL': options.channelMid
-    if options.proxy
-      @lineHttpOptions.agent = new HttpsProxyAgent options.proxy
+    @headers1 =
+      "Content-Type": "application/json"
+      "Authorization": "Bearer #{@channelToken}"
+    @headers2 =
+      "Authorization": "Bearer #{@channelToken}"
 
-    bot = new LineStreaming(options, @robot)
-
-    bot.on 'message', (from, id, contentType, contentMetadata, text, location) ->
+    self.on 'message', (token, source, message) ->
+      switch source.type
+        when 'user'
+          from = source.userId
+        when 'group'
+          from = source.groupId
+        when 'zoom'
+          from = source.zoomId
       user = @robot.brain.userForId from
-      switch contentType
-        when 1
-          @robot.logger.debug "LINE text message [#{text}] from [#{from}] id [#{id}]"
-          self.receive new TextMessage user, text
-        when 2
-          @robot.logger.debug "LINE image message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}]"
-          self.receive new LineImageMessage user, @robot, id, contentType, contentMetadata
-        when 3
-          @robot.logger.debug "LINE video message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}]"
-          self.receive new LineVideoMessage user, @robot, id, contentType, contentMetadata
-        when 4
-          @robot.logger.debug "LINE audio message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}]"
-          self.receive new LineAudioMessage user, @robot, id, contentType, contentMetadata
-        when 7
-          @robot.logger.debug "LINE location message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}] location [#{JSON.stringify(location)}]"
-          self.receive new LineLocationMessage user, @robot, id, contentType, contentMetadata, location
-        when 8
-          @robot.logger.debug "LINE sticker message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}]"
-          self.receive new LineStickerMessage user, @robot, id, contentType, contentMetadata
-        when 10
-          @robot.logger.debug "LINE contact message from [#{from}] id [#{id}] contentMetadata [#{JSON.stringify(contentMetadata)}]"
-          self.receive new LineContactMessage user, @robot, id, contentType, contentMetadata
+      # Store reply token in robot.brain.user
+      user.token = token
+      text = message.text
+      # Add robot name in front of the message text
+      regex = new RegExp("^#{@robot.name}", "i")
+      if !regex.test(text) #and source.type is 'user'
+        text = "#{@robot.name} #{text}"
+
+      switch message.type
+        when 'text'
+          @robot.logger.debug "LINE text message <#{text}> from <#{from}>"
+          self.receive new TextMessage user, text, message.id
+        when 'image'
+          @robot.logger.debug "LINE image message from <#{from}>"
+          self.receive new LineImageMessage user, @robot, message
+        when 'video'
+          @robot.logger.debug "LINE video message from <#{from}>"
+          self.receive new LineVideoMessage user, @robot, message
+        when 'audio'
+          @robot.logger.debug "LINE audio message from <#{from}>"
+          self.receive new LineAudioMessage user, @robot, message
+        when 'location'
+          @robot.logger.debug "LINE location message from <#{from}>"
+          self.receive new LineLocationMessage user, message
+        when 'sticker'
+          @robot.logger.debug "LINE sticker message from <#{from}>"
+          self.receive new LineStickerMessage user, message
         else
-          @robot.logger.error "LINE unknown message [#{text}] from [#{from}] id [#{id}] contentType [#{contentType}] contentMetadata [#{JSON.stringify(contentMetadata)}] location [#{JSON.stringify(location)}]"
-          self.receive new LineRawMessage user, @robot, id, contentType, contentMetadata, location
+          @robot.logger.error "LINE unknown message from <#{from}>"
 
-    bot.on 'operation', (opType, params) ->
-      switch opType
-        when 4
-          @robot.logger.debug "LINE friend operation from [#{params}]"
-          user = @robot.brain.userForId params[0]
-          self.receive new LineFriendOperation user, opType, params
-        when 8
-          @robot.logger.debug "LINE block operation from [#{params}]"
-          user = @robot.brain.userForId params[0]
-          self.receive new LineBlockOperation user, opType, params
-        else
-          @robot.logger.error "LINE unknown operation opType [#{opType}] params[#{params}]"
-          user = @robot.brain.userForId params[0]
-          self.receive new LineRawOperation user, opType, params
+    self.on 'follow', (token, source) ->
+      from = source.userId
+      user = @robot.brain.userForId from
+      user.token = token
+      @robot.logger.debug "LINE follow from <#{from}>"
+      self.receive new LineFollow user
 
-    bot.listen()
+    self.on 'unfollow', (source) ->
+      from = source.userId
+      user = @robot.brain.userForId from
+      @robot.logger.debug "LINE unfollow from <#{from}>"
+      self.receive new LineUnfollow user
 
-    @bot = bot
+    self.on 'join', (token, source) ->
+      from = source.groupId
+      user = @robot.brain.userForId from
+      user.token = token
+      @robot.logger.debug "LINE join from <#{from}>"
+      self.receive new LineJoin user
 
+    self.on 'leave', (source) ->
+      from = source.groupId
+      user = @robot.brain.userForId from
+      @robot.logger.debug "LINE leave from <#{from}>"
+      self.receive new LineLeave user
+
+    self.on 'postback', (token, source, postback) ->
+      switch source.type
+        when 'user'
+          from = source.userId
+        when 'group'
+          from = source.groupId
+        when 'zoom'
+          from = source.zoomId
+      user = @robot.brain.userForId from
+      user.token = token
+      @robot.logger.debug "LINE postback <#{postback.data}> from <#{from}>"
+      self.receive new LinePostback user, postback
+
+    self.on 'beacon', (token, source, beacon) ->
+      switch source.type
+        when 'user'
+          from = source.userId
+        when 'group'
+          from = source.groupId
+        when 'zoom'
+          from = source.zoomId
+      user = @robot.brain.userForId from
+      user.token = token
+      @robot.logger.debug "LINE beacon <#{beacon.hwid}> from <#{from}>"
+      self.receive new LineBeacon user, beacon
+   
+    @listen()
     @emit 'connected'
 
 
-
-
-
-class LineStreaming extends EventEmitter
-
-  constructor: (options, @robot) ->
-    @options = options
-
-
-  send: (to, message) ->
-    @robot.logger.debug "LINE send [#{message}] to [#{to}]"
-    @_request to, new LineTextAction message
-
-
-  emote: (to, action) ->
-    if action instanceof LineAction
-      @robot.logger.debug "LINE emote #{action.constructor.name} to [#{to}]"
-      @_request to, action
-    else
-      @robot.logger.error "LINE emote is ignored. emote supports LineAction only. to [#{to}]"
-
-
-  _request: (to, action) ->
-    logger = @robot.logger
-    body = JSON.stringify
-      to:        [to]
-      toChannel: 1383378250 # Fixed value
-      eventType: "138311608800106203" # Fixed value
-      content: action.requestParameters()
-    body = body.replace /[\u0080-\uFFFF]/g, (match) ->
-      escape(match).replace /%u/g, "\\u"
-    logger.debug "LINE _request body [#{body}]"
-
-    @robot.http({}, @robot.adapter.lineHttpOptions)
-      .path("/v1/events")
-      .header('Content-Type', 'application/json')
-      .post(body) (err, res, body) ->
-        logger.debug "LINE _request response statusCode [#{res.statusCode}]"
-        logger.debug "LINE _request response body [#{body}]"
-        if err
-          logger.error "LINE _request response error [#{err}]"
-
-
   listen: ->
-    @robot.router.post @options.callbackPath, (request, response) =>
-      @robot.logger.debug "LINE listen [#{JSON.stringify(request.body.result)}]"
-      for result in request.body.result
-        content = result.content
-        if result.eventType is "138311609100106403" # Received operation
-          @emit 'operation', content.opType, content.params
-        else
-          @emit 'message', content.from, content.id, content.contentType, content.contentMetadata, content.text, content.location
-      response.send 'OK'
+    @robot.router.post @webhookPath, @validate, (req, res) =>
+      @robot.logger.debug "LINE listen #{JSON.stringify(req.body.events)}"
+      for event in req.body.events
+        switch event.type
+          when 'message'
+            @emit 'message', event.replyToken, event.source, event.message
+          when 'follow'
+            @emit 'follow', event.replyToken, event.source
+          when 'unfollow'
+            @emit 'unfollow', event.source
+          when 'join'
+            @emit 'join', event.replyToken, event.source
+          when 'leave'
+            @emit 'leave', event.source
+          when 'postback'
+            @emit 'postback', event.replyToken, event.source, event.postback
+          when 'beacon'
+            @emit 'beacon', event.replyToken, event.source, event.beacon
+      res.send 'ok'
 
-
-
+      
+  validate: (req, res, next) ->
+    channelSecret = process.env.HUBOT_LINE_CHANNEL_SECRET
+    channelSignature = req.get 'x-line-signature'
+    hash = crypto.createHmac('sha256', channelSecret)
+                 .update(JSON.stringify(req.body), 'utf8')
+                 .digest('base64')
+    if hash is channelSignature
+      next()
+    else
+      @robot.logger.debug "LINE Signature invalid."
+      res.status(470).end()
 
 
 module.exports = LineAdapter
